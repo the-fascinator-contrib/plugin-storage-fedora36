@@ -1,0 +1,10 @@
+{
+    "storage": {
+        "type": "fedora36",
+        "fedora36": {
+            "url": "http://localhost:8888/fedora/",
+            "username": "fedoraAdmin",
+            "password": "fedoraAdmin"
+        }
+    }
+}
