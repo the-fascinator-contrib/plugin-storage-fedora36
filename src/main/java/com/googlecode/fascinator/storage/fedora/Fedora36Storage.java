@@ -40,6 +40,11 @@ import com.googlecode.fascinator.api.storage.StorageException;
 import com.googlecode.fascinator.common.JsonSimpleConfig;
 import com.yourmediashelf.fedora.client.FedoraClient;
 import com.yourmediashelf.fedora.client.FedoraClientException;
+import com.yourmediashelf.fedora.client.request.FedoraRequest;
+import com.yourmediashelf.fedora.client.request.FindObjects;
+import com.yourmediashelf.fedora.client.request.GetObjectXML;
+import com.yourmediashelf.fedora.client.request.Ingest;
+import com.yourmediashelf.fedora.client.request.PurgeObject;
 import com.yourmediashelf.fedora.client.response.FedoraResponse;
 import com.yourmediashelf.fedora.client.response.FindObjectsResponse;
 import com.yourmediashelf.fedora.client.response.IngestResponse;
@@ -191,8 +196,8 @@ public class Fedora36Storage implements Storage {
      */
     private void init() throws StorageException {
         // A quick connection test
-        Fedora36.getClient();
-
+        Fedora36.getNCClient();
+        Fedora36.releaseNCClient();
         // Do we have a template?
         String templatePath = systemConfig.getString(null, "storage",
                 "fedora36", "foxmlTemplate");
@@ -277,8 +282,8 @@ public class Fedora36Storage implements Storage {
         // Can we see object?
         try {
             fedoraClient = Fedora36.getNCClient();
-            FedoraResponse response = FedoraClient.getObjectXML(fedoraPid)
-                    .execute(fedoraClient);
+            GetObjectXML getObjectXML = FedoraClient.getObjectXML(fedoraPid);
+            FedoraResponse response = executeFedoraRequest(fedoraClient, getObjectXML);
 
             // If response code is not in the 200 range check the response
             if (response.getStatus() - 200 < 100) {
@@ -299,9 +304,9 @@ public class Fedora36Storage implements Storage {
         try {
             fedoraClient = Fedora36.getNCClient();
             data = new String(prepareTemplate(fedoraPid, oid), "utf-8");
-            IngestResponse response = FedoraClient.ingest().content(data)
-                    .format(FOXML_VERSION).logMessage(ADD_LOG_MESSAGE)
-                    .execute(fedoraClient);
+            Ingest ingest = FedoraClient.ingest().content(data).format(FOXML_VERSION).logMessage(ADD_LOG_MESSAGE);
+            IngestResponse response = (IngestResponse)executeFedoraRequest(fedoraClient, ingest); 
+            Fedora36.releaseNCClient();        
 
             String responsePid = response.getPid();
             if (!fedoraPid.equals(responsePid)) {
@@ -311,7 +316,7 @@ public class Fedora36Storage implements Storage {
                 throw new StorageException("Error with Fedora PIDs. Please"
                         + " check your system logs and configuration!");
             }
-            Fedora36.releaseNCClient();
+            
             // Instantiate and return
             return new Fedora36DigitalObject(oid, fedoraPid);
         } catch (Exception ex) {
@@ -336,9 +341,10 @@ public class Fedora36Storage implements Storage {
         }
         String fedoraPid = safeFedoraPid(oid);
         try {
-            FedoraClient fedoraClient = Fedora36.getClient();
-            FedoraResponse response = FedoraClient.getObjectXML(fedoraPid)
-                    .execute(fedoraClient);
+            FedoraClient fedoraClient = Fedora36.getNCClient();
+            GetObjectXML getObjectXML =FedoraClient.getObjectXML(fedoraPid); 
+            FedoraResponse response = executeFedoraRequest(fedoraClient, getObjectXML);
+            Fedora36.releaseNCClient();
             String data = response.getEntity(String.class);
             // Confirm we can see the object in Fedora
             // byte[] data = Fedora3.getApiM().getObjectXML(fedoraPid);
@@ -350,6 +356,8 @@ public class Fedora36Storage implements Storage {
             return new Fedora36DigitalObject(oid, fedoraPid);
         } catch (Exception ex) {
             throw new StorageException("Error accessing Fedora", ex);
+        } finally {
+        	Fedora36.releaseNCClient();
         }
     }
 
@@ -377,8 +385,8 @@ public class Fedora36Storage implements Storage {
     private void removeFedoraObject(String fedoraPid) throws StorageException {
         try {
             FedoraClient fedoraClient = Fedora36.getNCClient();
-            FedoraClient.purgeObject(fedoraPid).logMessage(DELETE_LOG_MESSAGE)
-            .execute(fedoraClient);
+            PurgeObject purgeObject = FedoraClient.purgeObject(fedoraPid).logMessage(DELETE_LOG_MESSAGE);
+            executeFedoraRequest(fedoraClient, purgeObject);
         } catch (Exception ex) {
             throw new StorageException("Error during Fedora search", ex);
         } finally {
@@ -396,11 +404,11 @@ public class Fedora36Storage implements Storage {
         log.info("Complete storage OID list requested...");
         Set<String> objectList = new HashSet<String>();
         try {
-            FedoraClient fedoraClient = Fedora36.getClient();
-            FindObjectsResponse response = FedoraClient.findObjects()
+            FedoraClient fedoraClient = Fedora36.getNCClient();
+            FindObjects findObjects = FedoraClient.findObjects()
                     .terms(Fedora36.namespace() + ":*")
-                    .maxResults(SEARCH_ROW_LIMIT_PER_PAGE)
-                    .execute(fedoraClient);
+                    .maxResults(SEARCH_ROW_LIMIT_PER_PAGE);
+            FindObjectsResponse response = (FindObjectsResponse)executeFedoraRequest(fedoraClient, findObjects);
 
             if (response.getStatus() == 200) {
                 while (true) {
@@ -411,14 +419,15 @@ public class Fedora36Storage implements Storage {
                     if (!response.hasNext()) {
                         break;
                     }
-                    response = FedoraClient.findObjects()
-                            .sessionToken(response.getToken())
-                            .execute(fedoraClient);
+                    findObjects = FedoraClient.findObjects().sessionToken(response.getToken());
+                    response = (FindObjectsResponse)executeFedoraRequest(fedoraClient, findObjects);
                 }
             }
         } catch (Exception e) {
             log.error("Error during Fedora search: ", e);
             return null;
+        } finally {
+        	Fedora36.releaseNCClient();
         }
         return objectList;
     }
@@ -497,5 +506,10 @@ public class Fedora36Storage implements Storage {
             log.error("Encoding error in template: ", ex);
             return null;
         }
+    }
+    
+    private FedoraResponse executeFedoraRequest(FedoraClient fedoraClient,
+			FedoraRequest<?> fedoraRequest) throws FedoraClientException {
+				return fedoraRequest.execute(fedoraClient);
     }
 }

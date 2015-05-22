@@ -31,17 +31,20 @@ import java.util.HashMap;
 import java.util.List;
 import java.util.Map;
 import java.util.concurrent.LinkedBlockingDeque;
+import java.util.concurrent.TimeUnit;
 
 import org.apache.commons.httpclient.methods.GetMethod;
 import org.slf4j.Logger;
 import org.slf4j.LoggerFactory;
 
+import com.google.common.util.concurrent.RateLimiter;
 import com.googlecode.fascinator.api.storage.StorageException;
 import com.googlecode.fascinator.common.BasicHttpClient;
 import com.googlecode.fascinator.common.JsonSimpleConfig;
 import com.yourmediashelf.fedora.client.FedoraClient;
 import com.yourmediashelf.fedora.client.FedoraClientException;
 import com.yourmediashelf.fedora.client.FedoraCredentials;
+import com.yourmediashelf.fedora.client.request.FedoraRequest;
 import com.yourmediashelf.fedora.client.request.GetObjectXML;
 import com.yourmediashelf.fedora.client.response.FedoraResponse;
 
@@ -54,372 +57,401 @@ import com.yourmediashelf.fedora.client.response.FedoraResponse;
  * @author Greg Pendlebury
  */
 public class Fedora36 {
-    /** Default Fedora base URL **/
-    private static final String DEFAULT_URL = "http://localhost:8080/fedora/";
+	/** Default Fedora base URL **/
+	private static final String DEFAULT_URL = "http://localhost:8080/fedora/";
 
-    /** Default Fedora namespace **/
-    private static final String DEFAULT_NAMESPACE = "uuid";
+	/** Default Fedora namespace **/
+	private static final String DEFAULT_NAMESPACE = "uuid";
 
-    /** Test PID to retrieve from the server **/
-    private static final String FEDORA_TEST_PID = "fedora-system:FedoraObject-3.0";
+	/** Test PID to retrieve from the server **/
+	private static final String FEDORA_TEST_PID = "fedora-system:FedoraObject-3.0";
 
-    /** Logger */
-    private static Logger log = LoggerFactory.getLogger(Fedora36.class);
+	private static RateLimiter requestRateLimiter;
 
-    /** System Config */
-    private static JsonSimpleConfig systemConfig;
+	/** Logger */
+	private static Logger log = LoggerFactory.getLogger(Fedora36.class);
 
-    /** Fedora - Client */
-    private static FedoraClient fedoraClient;
+	/** System Config */
+	private static JsonSimpleConfig systemConfig;
 
-    private static LinkedBlockingDeque<FedoraClient> ncFedoraClientCollection = new LinkedBlockingDeque<FedoraClient>(
-            1);
-    /** Fedora - API-A */
-    // private static FedoraAPIA accessApi;
+	/** Fedora - Client */
+	private static FedoraClient fedoraClient;
 
-    /** Fedora - API-M */
-    // private static FedoraAPIM managementApi;
+	private static LinkedBlockingDeque<FedoraClient> ncFedoraClientCollection = new LinkedBlockingDeque<FedoraClient>(
+			1);
+	/** Fedora - API-A */
+	// private static FedoraAPIA accessApi;
 
-    /** Fedora - Base URL */
-    private static String fedoraUrl;
+	/** Fedora - API-M */
+	// private static FedoraAPIM managementApi;
 
-    /** Fedora - Get URL */
-    private static String fedoraGetUrl;
+	/** Fedora - Base URL */
+	private static String fedoraUrl;
 
-    /** Fedora - Username */
-    private static String fedoraUsername;
+	/** Fedora - Get URL */
+	private static String fedoraGetUrl;
 
-    /** Fedora - Password */
-    private static String fedoraPassword;
+	/** Fedora - Username */
+	private static String fedoraUsername;
 
-    /** Fedora - Namespace */
-    private static String fedoraNamespace;
+	/** Fedora - Password */
+	private static String fedoraPassword;
 
-    /** Fedora - Connection timeout */
-    private static int fedoraTimeout;
+	/** Fedora - Namespace */
+	private static String fedoraNamespace;
 
-    /** Fedora - Server version */
-    private static String fedoraVersion;
+	/** Fedora - Connection timeout */
+	private static int fedoraTimeout;
 
-    /** Fascinator HTTP Client */
-    private static BasicHttpClient http;
+	/** Fedora - Server version */
+	private static String fedoraVersion;
 
-    /** Open HTTP Connections */
-    private static Map<String, List<GetMethod>> connections;
+	/** Fascinator HTTP Client */
+	private static BasicHttpClient http;
 
-    /**
-     * Public init method for File based configuration.
-     *
-     * @param jsonFile The File containing JSON configuration
-     * @throws StorageException if any errors occur
-     */
-    static void init(File jsonFile) throws StorageException {
-        try {
-            systemConfig = new JsonSimpleConfig(jsonFile);
-            init();
-        } catch (IOException ioe) {
-            throw new StorageException("Failed to read file configuration!",
-                    ioe);
-        }
-    }
+	/** Open HTTP Connections */
+	private static Map<String, List<GetMethod>> connections;
 
-    /**
-     * Public init method for String based configuration.
-     *
-     * @param jsonString The String containing JSON configuration
-     * @throws StorageException if any errors occur
-     */
-    static void init(String jsonString) throws StorageException {
-        try {
-            systemConfig = new JsonSimpleConfig(jsonString);
-            init();
-        } catch (IOException ioe) {
-            throw new StorageException("Failed to read string configuration!",
-                    ioe);
-        }
-    }
+	/**
+	 * Public init method for File based configuration.
+	 *
+	 * @param jsonFile
+	 *            The File containing JSON configuration
+	 * @throws StorageException
+	 *             if any errors occur
+	 */
+	static void init(File jsonFile) throws StorageException {
+		try {
+			systemConfig = new JsonSimpleConfig(jsonFile);
+			init();
+		} catch (IOException ioe) {
+			throw new StorageException("Failed to read file configuration!",
+					ioe);
+		}
+	}
 
-    /**
-     * Constructor
-     *
-     * @throws StorageException if any errors occur
-     */
-    private static void init() throws StorageException {
-        // Don't instantiate twice
-        if (fedoraClient != null) {
-            return;
-        }
+	/**
+	 * Public init method for String based configuration.
+	 *
+	 * @param jsonString
+	 *            The String containing JSON configuration
+	 * @throws StorageException
+	 *             if any errors occur
+	 */
+	static void init(String jsonString) throws StorageException {
+		try {
+			systemConfig = new JsonSimpleConfig(jsonString);
+			init();
+		} catch (IOException ioe) {
+			throw new StorageException("Failed to read string configuration!",
+					ioe);
+		}
+	}
 
-        // Grab all our information from config
-        fedoraUrl = systemConfig.getString(DEFAULT_URL, "storage", "fedora36",
-                "url");
-        fedoraUsername = systemConfig.getString(null, "storage", "fedora36",
-                "username");
-        fedoraPassword = systemConfig.getString(null, "storage", "fedora36",
-                "password");
-        fedoraNamespace = systemConfig.getString(DEFAULT_NAMESPACE, "storage",
-                "fedora36", "namespace");
-        fedoraTimeout = systemConfig.getInteger(15, "storage", "fedora36",
-                "timeout");
-        if (fedoraUrl == null || fedoraNamespace == null
-                || fedoraUsername == null || fedoraPassword == null) {
-            throw new StorageException("Fedora Storage:"
-                    + " Valid Fedora configuration is mising!");
-        }
+	/**
+	 * Constructor
+	 *
+	 * @throws StorageException
+	 *             if any errors occur
+	 */
+	private static void init() throws StorageException {
+		// Don't instantiate twice
+		if (fedoraClient != null) {
+			return;
+		}
 
-        // Sort out our base URL and HTTP client
-        if (!fedoraUrl.endsWith("/")) {
-            fedoraUrl += "/";
-        }
-        fedoraGetUrl = fedoraUrl + "get/";
-        http = new BasicHttpClient(fedoraUrl);
-        http.authenticate(fedoraUsername, fedoraPassword);
-        connections = new HashMap<String, List<GetMethod>>();
-        // Will throw the StorageException for us if there's something wrong
-        fedoraConnect();
-    }
+		// Grab all our information from config
+		fedoraUrl = systemConfig.getString(DEFAULT_URL, "storage", "fedora36",
+				"url");
+		fedoraUsername = systemConfig.getString(null, "storage", "fedora36",
+				"username");
+		fedoraPassword = systemConfig.getString(null, "storage", "fedora36",
+				"password");
+		fedoraNamespace = systemConfig.getString(DEFAULT_NAMESPACE, "storage",
+				"fedora36", "namespace");
+		fedoraTimeout = systemConfig.getInteger(15, "storage", "fedora36",
+				"timeout");
+		double rateLimit = systemConfig.getInteger(15, "storage", "fedora36",
+				"rateLimit");
+		requestRateLimiter = RateLimiter.create(rateLimit);
+		if (fedoraUrl == null || fedoraNamespace == null
+				|| fedoraUsername == null || fedoraPassword == null) {
+			throw new StorageException("Fedora Storage:"
+					+ " Valid Fedora configuration is mising!");
+		}
 
-    /**
-     * Establish a connection to Fedora's management API (API-M) to confirm
-     * credentials, then return the instantiated fedora client used to connect.
-     *
-     * @return FedoraClient : The client used to connect to the API
-     * @throws StorageException if there was an error
-     */
-    private static FedoraClient fedoraConnect() throws StorageException {
-        if (fedoraClient != null) {
-            return fedoraClient;
-        }
+		// Sort out our base URL and HTTP client
+		if (!fedoraUrl.endsWith("/")) {
+			fedoraUrl += "/";
+		}
+		fedoraGetUrl = fedoraUrl + "get/";
+		http = new BasicHttpClient(fedoraUrl);
+		http.authenticate(fedoraUsername, fedoraPassword);
+		connections = new HashMap<String, List<GetMethod>>();
+		// Will throw the StorageException for us if there's something wrong
+		fedoraConnect();
+	}
 
-        try {
-            // Connect to the server
-            FedoraCredentials credentials = new FedoraCredentials(fedoraUrl,
-                    fedoraUsername, fedoraPassword);
-            fedoraClient = new FedoraClient(credentials);
+	/**
+	 * Establish a connection to Fedora's management API (API-M) to confirm
+	 * credentials, then return the instantiated fedora client used to connect.
+	 *
+	 * @return FedoraClient : The client used to connect to the API
+	 * @throws StorageException
+	 *             if there was an error
+	 */
+	private static FedoraClient fedoraConnect() throws StorageException {
+		if (fedoraClient != null) {
+			return fedoraClient;
+		}
 
-            // Because this is a new connection we're going
-            // to do some additional work (and logging)
-            log.info("Connected to FEDORA : '{}'", fedoraUrl);
-            // Make sure we can get the server version
-            fedoraVersion = fedoraClient.getServerVersion();
-            log.info("FEDORA version: '{}'", fedoraVersion);
-            // And that we have appropriate access to the management API
+		try {
+			// Connect to the server
+			FedoraCredentials credentials = new FedoraCredentials(fedoraUrl,
+					fedoraUsername, fedoraPassword);
+			fedoraClient = new FedoraClient(credentials);
 
-            // Version cutout
-            if (!fedoraVersion.startsWith("3.")) {
-                throw new StorageException("Error; this plugin is designed"
-                        + " to work with Fedora versions 3.x");
-            }
+			// Because this is a new connection we're going
+			// to do some additional work (and logging)
+			log.info("Connected to FEDORA : '{}'", fedoraUrl);
+			// Make sure we can get the server version
+			fedoraVersion = fedoraClient.getServerVersion();
+			log.info("FEDORA version: '{}'", fedoraVersion);
+			// And that we have appropriate access to the management API
 
-            // Version 3.x credentials test..
-            GetObjectXML getObjectXML = FedoraClient
-                    .getObjectXML(FEDORA_TEST_PID);
-            FedoraResponse response = getObjectXML.execute(fedoraClient);
-            String data = response.getEntity(String.class);
-            if (data != null && data.getBytes().length > 0) {
-                log.info("Access checked: '{}' = {} bytes", FEDORA_TEST_PID,
-                        data.getBytes().length);
-            } else {
-                throw new StorageException("Error; could not retrieve "
-                        + FEDORA_TEST_PID);
-            }
-        } catch (MalformedURLException ex) {
-            throw new StorageException("Fedora Storage:"
-                    + " Server URL is Invalid (?) : ", ex);
-        } catch (IOException ex) {
-            throw new StorageException("Fedora Storage:"
-                    + " Error connecting to Fedora! : ", ex);
-        } catch (Exception ex) {
-            throw new StorageException("Fedora Storage:"
-                    + " Error accesing management API! : ", ex);
-        }
+			// Version cutout
+			if (!fedoraVersion.startsWith("3.")) {
+				throw new StorageException("Error; this plugin is designed"
+						+ " to work with Fedora versions 3.x");
+			}
 
-        ncFedoraClientCollection.addFirst(fedoraClient);
-        return fedoraClient;
-    }
+			// Version 3.x credentials test..
+			GetObjectXML getObjectXML = FedoraClient
+					.getObjectXML(FEDORA_TEST_PID);
+			FedoraResponse response = getObjectXML.execute(fedoraClient);
+			String data = response.getEntity(String.class);
+			if (data != null && data.getBytes().length > 0) {
+				log.info("Access checked: '{}' = {} bytes", FEDORA_TEST_PID,
+						data.getBytes().length);
+			} else {
+				throw new StorageException("Error; could not retrieve "
+						+ FEDORA_TEST_PID);
+			}
+		} catch (MalformedURLException ex) {
+			throw new StorageException("Fedora Storage:"
+					+ " Server URL is Invalid (?) : ", ex);
+		} catch (IOException ex) {
+			throw new StorageException("Fedora Storage:"
+					+ " Error connecting to Fedora! : ", ex);
+		} catch (Exception ex) {
+			throw new StorageException("Fedora Storage:"
+					+ " Error accesing management API! : ", ex);
+		}
 
-    /**
-     * Package-private version check of the connected server.
-     *
-     * @return String The Fedora Server's version
-     */
-    static String getVersion() {
-        return fedoraVersion;
-    }
+		ncFedoraClientCollection.addFirst(fedoraClient);
+		return fedoraClient;
+	}
 
-    /**
-     * Package-private 'getter' method for the base Fedora Client.
-     *
-     * @return FedoraClient The Fedora Client Object
-     * @throws StorageException if any errors occur
-     */
-    static FedoraClient getClient() throws StorageException {
-        return fedoraConnect();
-    }
+	/**
+	 * Package-private version check of the connected server.
+	 *
+	 * @return String The Fedora Server's version
+	 */
+	static String getVersion() {
+		return fedoraVersion;
+	}
 
-    /**
-     * Package-private 'getter' method for the base Fedora Client.
-     *
-     * @return FedoraClient The Fedora Client Object
-     * @throws StorageException if any errors occur
-     * @throws InterruptedException
-     */
-    static FedoraClient getNCClient() throws StorageException {
-        fedoraConnect();
+	/**
+	 * Package-private 'getter' method for the base Fedora Client.
+	 *
+	 * @return FedoraClient The Fedora Client Object
+	 * @throws StorageException
+	 *             if any errors occur
+	 */
+	static FedoraClient getClient() throws StorageException {
+		return fedoraConnect();
+	}
 
-        try {
-            return ncFedoraClientCollection.takeFirst();
-        } catch (InterruptedException e) {
-            throw new StorageException(e);
-        }
+	/**
+	 * Package-private 'getter' method for the base Fedora Client.
+	 *
+	 * @return FedoraClient The Fedora Client Object
+	 * @throws StorageException
+	 *             if any errors occur
+	 * @throws InterruptedException
+	 */
+	static FedoraClient getNCClient() throws StorageException {
+		fedoraConnect();
 
-    }
+		try {
+			requestRateLimiter.acquire();
+			return ncFedoraClientCollection.pollFirst(10L, TimeUnit.SECONDS);
+		} catch (InterruptedException e) {
+			throw new StorageException(e);
+		}
 
-    public static void releaseNCClient() {
-        if (ncFedoraClientCollection.isEmpty()) {
-            ncFedoraClientCollection.addFirst(fedoraClient);
-        }
+	}
 
-    }
+	public static void releaseNCClient() {
+		if (ncFedoraClientCollection.isEmpty()) {
+			ncFedoraClientCollection.offer(fedoraClient);
+		}
 
-    /**
-     * Trivial 'getter' for retrieving the configured namespace.
-     *
-     * @return String The configured namespace Fascinator is using in Fedora
-     */
-    static String namespace() {
-        return fedoraNamespace;
-    }
+	}
 
-    /**
-     * Get InputStream of a Datastream via an authenticated web requested.
-     *
-     * @param fedoraPid The fedora PID containing the datastream
-     * @param dsId The datastream's ID
-     * @return InputStream An input stream for the datastream
-     * @throws IOException if an errors occur
-     */
-    static InputStream getStream(String fedoraPid, String dsId)
-            throws IOException {
+	/**
+	 * Trivial 'getter' for retrieving the configured namespace.
+	 *
+	 * @return String The configured namespace Fascinator is using in Fedora
+	 */
+	static String namespace() {
+		return fedoraNamespace;
+	}
 
-        try {
-            FedoraResponse r = FedoraClient.getDatastreamDissemination(
-                    fedoraPid, dsId).execute(fedoraClient);
-            return r.getEntityInputStream();
-        } catch (FedoraClientException e) {
-            throw new IOException(e);
-        }
-    }
+	/**
+	 * Get InputStream of a Datastream via an authenticated web requested.
+	 *
+	 * @param fedoraPid
+	 *            The fedora PID containing the datastream
+	 * @param dsId
+	 *            The datastream's ID
+	 * @return InputStream An input stream for the datastream
+	 * @throws IOException
+	 *             if an errors occur
+	 */
+	static InputStream getStream(String fedoraPid, String dsId)
+			throws IOException {
+		try {
+			FedoraResponse r = executeFedoraRequest(getNCClient(),
+					FedoraClient.getDatastreamDissemination(fedoraPid, dsId));
+			return r.getEntityInputStream();
+		} catch (Exception e) {
+			throw new IOException(e);
+		} finally {
+			releaseNCClient();
+		}
+	}
 
-    /**
-     * Release an open HTTP connection that may be held for this combination of
-     * PID and DSID.
-     *
-     * @param fedoraPid The fedora PID containing the datastream
-     * @param dsId The datastream's ID
-     */
-    static void release(String fedoraPid, String dsId) {
-        // log.debug("release({}, {})", fedoraPid, dsId);
+	/**
+	 * Release an open HTTP connection that may be held for this combination of
+	 * PID and DSID.
+	 *
+	 * @param fedoraPid
+	 *            The fedora PID containing the datastream
+	 * @param dsId
+	 *            The datastream's ID
+	 */
+	static void release(String fedoraPid, String dsId) {
+		// log.debug("release({}, {})", fedoraPid, dsId);
 
-        /*
-         * This idea is worthwhile, but at this stage seems impractical.
-         * We need some way of defining a key that is targetable to an
-         * individual connection, not just to a payload.
-         *
-         * The API needs to be changed to accomodate this sort of thing. It
-         * would most likely involve return a result object that provides
-         * access to both the stream and a token that can be used on return.
-         *
-         * =============
-         * TODO: Another option
-         * http://hc.apache.org/httpclient-3.x/apidocs/org/apache/commons/httpclient/HttpMethod.html#getResponseBodyAsStream%28%29
-         *
-         * "... null may be returned ... if this method was called previously
-         * and the resulting stream was closed."
-         * =====
-         *
-         * So, relying on the above logic You could keep lists of connections
-         * against each key, and each close() call against the key would check
-         * for null inputstreams per connection, closing those that it finds...
-         *
-         * This idea minimises opened connections hanging around, but doesn't
-         * address closing the actual InputStreams... it only closes connections
-         * where the user remembered to close the InputStream themselves.
-         *
-         */
+		/*
+		 * This idea is worthwhile, but at this stage seems impractical. We need
+		 * some way of defining a key that is targetable to an individual
+		 * connection, not just to a payload.
+		 * 
+		 * The API needs to be changed to accomodate this sort of thing. It
+		 * would most likely involve return a result object that provides access
+		 * to both the stream and a token that can be used on return.
+		 * 
+		 * ============= TODO: Another option
+		 * http://hc.apache.org/httpclient-3.x
+		 * /apidocs/org/apache/commons/httpclient
+		 * /HttpMethod.html#getResponseBodyAsStream%28%29
+		 * 
+		 * "... null may be returned ... if this method was called previously
+		 * and the resulting stream was closed." =====
+		 * 
+		 * So, relying on the above logic You could keep lists of connections
+		 * against each key, and each close() call against the key would check
+		 * for null inputstreams per connection, closing those that it finds...
+		 * 
+		 * This idea minimises opened connections hanging around, but doesn't
+		 * address closing the actual InputStreams... it only closes connections
+		 * where the user remembered to close the InputStream themselves.
+		 */
 
-        String key = fedoraPid + "/" + dsId;
-        if (connections.containsKey(key)) {
-            // Prepare
-            List<Integer> toClose = new ArrayList<Integer>();
-            List<GetMethod> toTest = connections.get(key);
-            Integer limit = toTest.size();
-            // Loop through all connections
-            for (Integer i = 0; i < limit; i++) {
-                boolean close = false;
-                try {
-                    InputStream in = toTest.get(i).getResponseBodyAsStream();
-                    // Case one, the InputStream has been closed already
-                    if (in == null) {
-                        close = true;
-                    }
-                } catch (IOException ioe) {
-                    // Case two... some unknown error
-                    close = true;
-                }
-                // We need to close this OUTSIDE THE LOOP
-                if (close) {
-                    toClose.add(i);
-                }
-            }
+		String key = fedoraPid + "/" + dsId;
+		if (connections.containsKey(key)) {
+			// Prepare
+			List<Integer> toClose = new ArrayList<Integer>();
+			List<GetMethod> toTest = connections.get(key);
+			Integer limit = toTest.size();
+			// Loop through all connections
+			for (Integer i = 0; i < limit; i++) {
+				boolean close = false;
+				try {
+					InputStream in = toTest.get(i).getResponseBodyAsStream();
+					// Case one, the InputStream has been closed already
+					if (in == null) {
+						close = true;
+					}
+				} catch (IOException ioe) {
+					// Case two... some unknown error
+					close = true;
+				}
+				// We need to close this OUTSIDE THE LOOP
+				if (close) {
+					toClose.add(i);
+				}
+			}
 
-            // Second loop... and backwards to preserve index orders
-            // as we remove higher values
-            limit = toClose.size();
-            for (Integer i = limit - 1; i >= 0; i--) {
-                // Close
-                toTest.get(i).releaseConnection();
-                // Then remove
-                toTest.remove((int) i);
-            }
-        }
-    }
+			// Second loop... and backwards to preserve index orders
+			// as we remove higher values
+			limit = toClose.size();
+			for (Integer i = limit - 1; i >= 0; i--) {
+				// Close
+				toTest.get(i).releaseConnection();
+				// Then remove
+				toTest.remove((int) i);
+			}
+		}
+	}
 
-    /**
-     * Build's a GET URL for the requested PID and DSID combination.
-     *
-     * @param fedoraPid The fedora PID containing the datastream
-     * @param dsId The datastream's ID
-     * @return String The URL, possibly null if not possible to encode
-     */
-    private static String buildGetUrl(String fedoraPid, String dsId) {
-        try {
-            String returnValue = fedoraGetUrl;
-            returnValue += URLEncoder.encode(fedoraPid, "UTF-8");
-            if (dsId != null) {
-                returnValue += "/";
-                returnValue += URLEncoder.encode(dsId, "UTF-8");
-            }
-            return returnValue;
-        } catch (UnsupportedEncodingException ex) {
-            log.error("Error encoding URL for object '{}' and DS '{}'",
-                    fedoraPid, dsId);
-            return null;
-        }
-    }
+	/**
+	 * Build's a GET URL for the requested PID and DSID combination.
+	 *
+	 * @param fedoraPid
+	 *            The fedora PID containing the datastream
+	 * @param dsId
+	 *            The datastream's ID
+	 * @return String The URL, possibly null if not possible to encode
+	 */
+	private static String buildGetUrl(String fedoraPid, String dsId) {
+		try {
+			String returnValue = fedoraGetUrl;
+			returnValue += URLEncoder.encode(fedoraPid, "UTF-8");
+			if (dsId != null) {
+				returnValue += "/";
+				returnValue += URLEncoder.encode(dsId, "UTF-8");
+			}
+			return returnValue;
+		} catch (UnsupportedEncodingException ex) {
+			log.error("Error encoding URL for object '{}' and DS '{}'",
+					fedoraPid, dsId);
+			return null;
+		}
+	}
 
-    /**
-     * A really simple wrapper on closable object to allow trivial close
-     * attempts when we are unsure if they are even open.
-     *
-     * @param toClose A Closeable Object to try closing
-     */
-    static void close(Closeable toClose) {
-        try {
-            toClose.close();
-        } catch (IOException ex) {
-            // No worries, they may not even be open
-        }
-    }
+	/**
+	 * A really simple wrapper on closable object to allow trivial close
+	 * attempts when we are unsure if they are even open.
+	 *
+	 * @param toClose
+	 *            A Closeable Object to try closing
+	 */
+	static void close(Closeable toClose) {
+		try {
+			toClose.close();
+		} catch (IOException ex) {
+			// No worries, they may not even be open
+		}
+	}
+
+	private static FedoraResponse executeFedoraRequest(
+			FedoraClient fedoraClient, FedoraRequest<?> fedoraRequest)
+			throws FedoraClientException {
+		return fedoraRequest.execute(fedoraClient);
+
+	}
 
 }
