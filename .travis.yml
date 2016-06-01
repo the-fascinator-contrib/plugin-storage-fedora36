@@ -1,0 +1,19 @@
+sudo: required
+language: java
+services:
+- docker
+before_install:
+- mkdir /tmp/build
+- docker pull qcifengineering/redbox-builder
+- docker run -v /tmp/build:/build -e "CLONEPATH=https://github.com/the-fascinator-contrib/plugin-storage-fedora36.git"
+  qcifengineering/redbox-builder
+install: true
+script: true
+after_success:
+- docker run -v /tmp/build:/build -e "SONATYPE_USERNAME=$SONATYPE_USERNAME" -e "SONATYPE_PASSWORD=$SONATYPE_PASSWORD"
+  qcifengineering/redbox-builder /bin/bash -c "cd build/src;mvn --settings /m2_repo/travis-settings.xml
+  -Dmaven.repo.local=/m2_repo -DskipTests=true deploy"
+env:
+  global:
+  - secure: f7PjLwRB0QJa/YKnUfsbu5hpZ1U/r/4p1CwhZOm3v7nIRO4BeYQ425hiWIvW59HzH2gBaEa9IytdtcZzFPhGzIr3oc/GaznZv9s4sJx3cYnf4buyMIJ0XI6+2FNDOTDupDKVvuvWpMYVCjEvrRbhIzvJwFYsw1Hkh/cM7N7xEexl2VzsKfd+GHFgJXGKqqrkA9ph9JaRqOX3YeVSXy+pm85Vap12g2KQzM+RiVxCUj3hLD/DD9VXGKitM0UOeKUe6yMnhp6hltbVbNXU+r43wVXGQqjhJsDPgwoMDrSjqiJ0T3irLYWRLaRm/czu1BNgsJlPZDzAeXJDH764VZp3z3eaQLsPJzRSz+z6n4Mg9kYfg4rJnKKdiOh9ldc5C6hp4V3fnVbsgH11JLYuQ3FQ3b7P+z8jJ0kuIm9iR+OvGrYeM+dn0Ime8OZ12/fU93no8Tk6OcneljZS82yc3lj13J6SrWK0IwcmfelaukejRqDkSp2//W6eqgKZjxjDGvWPZ2RGCCoL6malEGaSz9n19uFAm+Qr7yqOGvFFqR67V6BNM5Iqs8HBtdCxl1H90gI79idQCk3WAReY30HlQ8E8p22F9Ss7xPpMHCYD8NaLkNWruvR8+o+BM6upwhDhs60mddVz2aLNLZjhp/xUGZMLZtNMcY8VG6SZ0Ys5WMz5Kcs=
+  - secure: WNTSC+FHm79gjw62G5kA1x/2Wc0P64ib3K60COMcGsXpaWj5732aOYYQoUIADc4WOwWhxndGNAB0Z5X8w/MisBG0FRB3hS8PnIn3ZY+cQrGbdYXhID63VQLzJ9vto/Zecxbv/G1oCrnUaUkkFSoLpPs+kF92+E+E4VDTr7XBCbXEPq8wjFLcf5ExYxwz5S2F9fjElHy8DcC2aq5xbjGbhYiBgiTaRowRkR7Ri3u20d6c9FuVman+5ujRyjOjy+/G/CSPoTsTv2+P6JtAKTWxDCEO9QqL3wk/4ZlTTax5U3H0e/f9HBobOT5RF5lbjlqomEq9mEIx11oALdkG+y8jCKSGIoqcRsaDITG/dH6wmz85SnEWcThobfsiytYSNHi72lgwDXKO4PFEoiTHqZ6K9Wzb3uSWDVDXgk1ytXRhovUIQ0UsSNOS66wCL1o0TyhLQhSC2ymR7KcEbpkN1E18Frtd48FdGmxpm6JAQlBj760ruT9GAllw33lfCOrOfDbnMDNGcm3gg6bffVEGauEHzbYueI8eSWC15UANLpH2VR3uXR/nydTEAdEa2+f4YVUeM7XOCJG59LQ4EOivp623qaIdwWkMs9Ffj1i8uDvOYxUjzPJyHgVIJwJasVxfwRcEgTpKzJSXzK/JF/jh+GAQSzc6bcazC0NcfTvqmBHo01I=
